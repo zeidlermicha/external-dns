@@ -36,10 +36,17 @@ func ShamanWithDomain(domainFilter DomainFilter) ShamanOption {
 	}
 }
 
+func ShamanDryRun(dryRun bool) ShamanOption{
+	return func(p *ShamanProvider){
+		p.dryRun = dryRun
+	}
+}
+
 type ShamanProvider struct {
 	domain         DomainFilter
 	client         *client.ShamanClient
 	filter         *filter
+	dryRun		   bool
 	OnApplyChanges func(changes *plan.Changes)
 	OnRecords      func()
 }
@@ -81,7 +88,9 @@ func (shaman *ShamanProvider) Records() ([]*endpoint.Endpoint, error) {
 
 func (shaman *ShamanProvider) ApplyChanges(changes *plan.Changes) error {
 	defer shaman.OnApplyChanges(changes)
-
+	if shaman.dryRun{
+		return nil
+	}
 	for _, ep := range changes.Create {
 
 		err := shaman.create(ep)
@@ -132,14 +141,6 @@ func (shaman *ShamanProvider) delete(endpoint *endpoint.Endpoint) error {
 	return err
 }
 
-func convertResource(resource *common.Resource) []*endpoint.Endpoint {
-	e := make([]*endpoint.Endpoint, 0)
-	for _, r := range resource.Records {
-		e = append(e, endpoint.NewEndpointWithTTL(resource.Domain, r.Address, r.RType, endpoint.TTL(r.TTL)))
-	}
-
-	return e
-}
 
 func convertEndpoint(endpoint *endpoint.Endpoint) *common.Resource {
 

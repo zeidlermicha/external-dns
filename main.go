@@ -128,7 +128,7 @@ func main() {
 			},
 		)
 	case "shaman":
-		p = provider.NewShamanProvider(cfg.ShamanHost,cfg.ShamanToken,provider.ShamanWithLogging())
+		p = provider.NewShamanProvider(cfg.ShamanHost,cfg.ShamanToken,provider.ShamanWithLogging(),provider.ShamanDryRun(cfg.DryRun))
 	case "inmemory":
 		p, err = provider.NewInMemoryProvider(provider.InMemoryInitZones(cfg.InMemoryZones), provider.InMemoryWithDomain(domainFilter), provider.InMemoryWithLogging()), nil
 	default:
