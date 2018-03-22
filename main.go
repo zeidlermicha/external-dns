@@ -94,16 +94,12 @@ func main() {
 	switch cfg.Provider {
 	case "aws":
 		p, err = provider.NewAWSProvider(domainFilter, zoneIDFilter, zoneTypeFilter, cfg.DryRun)
-	case "azure":
-		p, err = provider.NewAzureProvider(cfg.AzureConfigFile, domainFilter, zoneIDFilter, cfg.AzureResourceGroup, cfg.DryRun)
 	case "cloudflare":
 		p, err = provider.NewCloudFlareProvider(domainFilter, zoneIDFilter, cfg.CloudflareProxied, cfg.DryRun)
 	case "google":
 		p, err = provider.NewGoogleProvider(cfg.GoogleProject, domainFilter, zoneIDFilter, cfg.DryRun)
 	case "digitalocean":
 		p, err = provider.NewDigitalOceanProvider(domainFilter, cfg.DryRun)
-	case "dnsimple":
-		p, err = provider.NewDnsimpleProvider(domainFilter, zoneIDFilter, cfg.DryRun)
 	case "infoblox":
 		p, err = provider.NewInfobloxProvider(
 			provider.InfobloxConfig{
@@ -131,6 +127,8 @@ func main() {
 				AppVersion:    externaldns.Version,
 			},
 		)
+	case "shaman":
+		p = provider.NewShamanProvider(cfg.ShamanHost,cfg.ShamanToken,provider.ShamanWithLogging())
 	case "inmemory":
 		p, err = provider.NewInMemoryProvider(provider.InMemoryInitZones(cfg.InMemoryZones), provider.InMemoryWithDomain(domainFilter), provider.InMemoryWithLogging()), nil
 	default:
