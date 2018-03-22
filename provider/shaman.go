@@ -5,7 +5,7 @@ import (
 
 	"github.com/kubernetes-incubator/external-dns/endpoint"
 	"github.com/kubernetes-incubator/external-dns/plan"
-	"github.com/zeidlermicha/shamanClient"
+	"github.com/nanopack/shaman/client"
 	"github.com/nanopack/shaman/core/common"
 )
 
@@ -38,7 +38,7 @@ func ShamanWithDomain(domainFilter DomainFilter) ShamanOption {
 
 type ShamanProvider struct {
 	domain         DomainFilter
-	client         *shamanClient.ShamanClient
+	client         *client.ShamanClient
 	filter         *filter
 	OnApplyChanges func(changes *plan.Changes)
 	OnRecords      func()
@@ -49,7 +49,7 @@ func NewShamanProvider(host string, token string, opts ...ShamanOption) *ShamanP
 		OnApplyChanges: func(changes *plan.Changes) {},
 		OnRecords:      func() {},
 		domain:         NewDomainFilter([]string{""}),
-		client:         shamanClient.NewShamanClient(host, token),
+		client:         client.NewShamanClient(host, token),
 	}
 
 	for _, opt := range opts {
@@ -65,7 +65,7 @@ func (shaman *ShamanProvider) Records() ([]*endpoint.Endpoint, error) {
 
 	endpoints := make([]*endpoint.Endpoint, 0)
 
-	records, err := shaman.client.GetRecords(&shamanClient.FullOption{ShowFull:true,})
+	records, err := shaman.client.GetRecords(&client.FullOption{ShowFull:true,})
 	if err != nil {
 		return nil, err
 	}
