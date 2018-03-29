@@ -99,8 +99,8 @@ func (shaman *ShamanProvider) ApplyChanges(changes *plan.Changes) error {
 		}
 	}
 
-	for _, ep := range mergeChanges(changes.Delete){
-		err := shaman.delete(ep)
+	for _, ep := range mergeChanges(changes.UpdateOld) {
+		err := shaman.update(ep)
 		if err != nil {
 			return err
 		}
@@ -113,8 +113,8 @@ func (shaman *ShamanProvider) ApplyChanges(changes *plan.Changes) error {
 		}
 	}
 
-	for _, ep := range mergeChanges(changes.UpdateOld) {
-		err := shaman.update(ep)
+	for _, ep := range mergeChanges(changes.Delete) {
+		err := shaman.delete(ep)
 		if err != nil {
 			return err
 		}
