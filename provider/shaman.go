@@ -36,8 +36,8 @@ func ShamanWithDomain(domainFilter DomainFilter) ShamanOption {
 	}
 }
 
-func ShamanDryRun(dryRun bool) ShamanOption{
-	return func(p *ShamanProvider){
+func ShamanDryRun(dryRun bool) ShamanOption {
+	return func(p *ShamanProvider) {
 		p.dryRun = dryRun
 	}
 }
@@ -46,7 +46,7 @@ type ShamanProvider struct {
 	domain         DomainFilter
 	client         *client.ShamanClient
 	filter         *filter
-	dryRun		   bool
+	dryRun         bool
 	OnApplyChanges func(changes *plan.Changes)
 	OnRecords      func()
 }
@@ -72,7 +72,7 @@ func (shaman *ShamanProvider) Records() ([]*endpoint.Endpoint, error) {
 
 	endpoints := make([]*endpoint.Endpoint, 0)
 
-	records, err := shaman.client.GetRecords(&client.FullOption{ShowFull:true,})
+	records, err := shaman.client.GetRecords(&client.FullOption{ShowFull: true,})
 	if err != nil {
 		return nil, err
 	}
@@ -88,10 +88,10 @@ func (shaman *ShamanProvider) Records() ([]*endpoint.Endpoint, error) {
 
 func (shaman *ShamanProvider) ApplyChanges(changes *plan.Changes) error {
 	defer shaman.OnApplyChanges(changes)
-	if shaman.dryRun{
+	if shaman.dryRun {
 		return nil
 	}
-	for _, ep := range changes.Create {
+	for _, ep := range mergeChanges(changes.Create) {
 
 		err := shaman.create(ep)
 		if err != nil {
@@ -99,21 +99,21 @@ func (shaman *ShamanProvider) ApplyChanges(changes *plan.Changes) error {
 		}
 	}
 
-	for _, ep := range changes.Delete {
+	for _, ep := range mergeChanges(changes.Delete){
 		err := shaman.delete(ep)
 		if err != nil {
 			return err
 		}
 	}
 
-	for _, ep := range changes.UpdateNew {
+	for _, ep := range mergeChanges(changes.UpdateNew) {
 		err := shaman.update(ep)
 		if err != nil {
 			return err
 		}
 	}
 
-	for _, ep := range changes.UpdateOld {
+	for _, ep := range mergeChanges(changes.UpdateOld) {
 		err := shaman.update(ep)
 		if err != nil {
 			return err
@@ -123,31 +123,49 @@ func (shaman *ShamanProvider) ApplyChanges(changes *plan.Changes) error {
 	return nil
 }
 
-func (shaman *ShamanProvider) create(endpoint *endpoint.Endpoint) error {
+func mergeChanges(changes []*endpoint.Endpoint) []*common.Resource {
+	m := make(map[string]*common.Resource)
+	for _, e := range changes {
+		if _, ok := m[e.DNSName]; !ok {
+			m[e.DNSName] =&common.Resource{
+				Domain:e.DNSName,
+				Records:make([]common.Record,0),
+			}
+		}
+		m[e.DNSName].Records = append(m[e.DNSName].Records, convertTargets(e)...)
+	}
+	values := make([]*common.Resource,len(m))
+	for _, value := range m {
+		values = append(values,value)
+	}
+	return values
 
-	_, err := shaman.client.AddRecord(convertEndpoint(endpoint))
+}
+
+func (shaman *ShamanProvider) create(endpoint *common.Resource) error {
+
+	_, err := shaman.client.AddRecord(endpoint)
 	return err
 }
 
-func (shaman *ShamanProvider) update(endpoint *endpoint.Endpoint) error {
+func (shaman *ShamanProvider) update(endpoint *common.Resource) error {
 
-	_, err := shaman.client.UpdateRecord(convertEndpoint(endpoint))
+	_, err := shaman.client.UpdateRecord(endpoint)
 	return err
 }
 
-func (shaman *ShamanProvider) delete(endpoint *endpoint.Endpoint) error {
+func (shaman *ShamanProvider) delete(endpoint *common.Resource) error {
 
-	err := shaman.client.DeleteRecord(endpoint.DNSName)
+	err := shaman.client.DeleteRecord(endpoint.Domain)
 	return err
 }
 
-
-func convertEndpoint(endpoint *endpoint.Endpoint) *common.Resource {
+func convertTargets(endpoint *endpoint.Endpoint) []common.Record {
 
 	records := make([]common.Record, 0)
 	for _, t := range endpoint.Targets {
 		records = append(records, common.Record{Address: t, RType: endpoint.RecordType, Class: "IN", TTL: int(endpoint.RecordTTL)})
 	}
-	r := &common.Resource{Domain: endpoint.DNSName, Records: records}
-	return r
+
+	return records
 }
