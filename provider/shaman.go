@@ -91,7 +91,8 @@ func (shaman *ShamanProvider) ApplyChanges(changes *plan.Changes) error {
 	if shaman.dryRun {
 		return nil
 	}
-	for _, ep := range mergeChanges(changes.Create) {
+	values:= mergeChanges(changes.Create)
+	for _, ep := range values {
 
 		err := shaman.create(ep)
 		if err != nil {
@@ -134,7 +135,7 @@ func mergeChanges(changes []*endpoint.Endpoint) []*common.Resource {
 		}
 		m[e.DNSName].Records = append(m[e.DNSName].Records, convertTargets(e)...)
 	}
-	values := make([]*common.Resource,len(m))
+	values := make([]*common.Resource,0)
 	for _, value := range m {
 		values = append(values,value)
 	}
