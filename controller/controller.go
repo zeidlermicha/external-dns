@@ -19,12 +19,51 @@ package controller
 import (
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/kubernetes-incubator/external-dns/plan"
 	"github.com/kubernetes-incubator/external-dns/registry"
 	"github.com/kubernetes-incubator/external-dns/source"
 )
+
+var (
+	registryErrors = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "registry_errors_total",
+			Help: "Number of Registry errors.",
+		},
+	)
+	sourceErrors = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "source_errors_total",
+			Help: "Number of Source errors.",
+		},
+	)
+	sourceEndpointsTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "external_dns",
+			Subsystem: "source",
+			Name:      "endpoints_total",
+			Help:      "Number of Endpoints in all sources",
+		},
+	)
+	registryEndpointsTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "external_dns",
+			Subsystem: "registry",
+			Name:      "endpoints_total",
+			Help:      "Number of Endpoints in the registry",
+		},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(registryErrors)
+	prometheus.MustRegister(sourceErrors)
+	prometheus.MustRegister(sourceEndpointsTotal)
+	prometheus.MustRegister(registryEndpointsTotal)
+}
 
 // Controller is responsible for orchestrating the different components.
 // It works in the following way:
@@ -45,13 +84,17 @@ type Controller struct {
 func (c *Controller) RunOnce() error {
 	records, err := c.Registry.Records()
 	if err != nil {
+		registryErrors.Inc()
 		return err
 	}
+	registryEndpointsTotal.Set(float64(len(records)))
 
 	endpoints, err := c.Source.Endpoints()
 	if err != nil {
+		sourceErrors.Inc()
 		return err
 	}
+	sourceEndpointsTotal.Set(float64(len(endpoints)))
 
 	plan := &plan.Plan{
 		Policies: []plan.Policy{c.Policy},
@@ -61,19 +104,25 @@ func (c *Controller) RunOnce() error {
 
 	plan = plan.Calculate()
 
-	return c.Registry.ApplyChanges(plan.Changes)
+	err = c.Registry.ApplyChanges(plan.Changes)
+	if err != nil {
+		registryErrors.Inc()
+		return err
+	}
+	return nil
 }
 
 // Run runs RunOnce in a loop with a delay until stopChan receives a value.
 func (c *Controller) Run(stopChan <-chan struct{}) {
+	ticker := time.NewTicker(c.Interval)
+	defer ticker.Stop()
 	for {
 		err := c.RunOnce()
 		if err != nil {
 			log.Error(err)
 		}
-
 		select {
-		case <-time.After(c.Interval):
+		case <-ticker.C:
 		case <-stopChan:
 			log.Info("Terminating main controller loop")
 			return

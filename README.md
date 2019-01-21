@@ -13,7 +13,7 @@ ExternalDNS synchronizes exposed Kubernetes Services and Ingresses with DNS prov
 
 ## What It Does
 
-Inspired by [Kubernetes DNS](https://github.com/kubernetes/dns), Kubernetes' cluster-internal DNS server, ExternalDNS makes Kubernetes resources discoverable via public DNS servers. Like KubeDNS, it retrieves a list of resources (Services, Ingresses, etc.) from the [Kubernetes API](https://kubernetes.io/docs/api/) to determine a desired list of DNS records. *Unlike* KubeDNS, however, it's not a DNS server itself, but merely configures other DNS providers accordingly—e.g. [AWS Route 53](https://aws.amazon.com/route53/) or [Google CloudDNS](https://cloud.google.com/dns/docs/).
+Inspired by [Kubernetes DNS](https://github.com/kubernetes/dns), Kubernetes' cluster-internal DNS server, ExternalDNS makes Kubernetes resources discoverable via public DNS servers. Like KubeDNS, it retrieves a list of resources (Services, Ingresses, etc.) from the [Kubernetes API](https://kubernetes.io/docs/api/) to determine a desired list of DNS records. *Unlike* KubeDNS, however, it's not a DNS server itself, but merely configures other DNS providers accordingly—e.g. [AWS Route 53](https://aws.amazon.com/route53/) or [Google Cloud DNS](https://cloud.google.com/dns/docs/).
 
 In a broader sense, ExternalDNS allows you to control DNS records dynamically via Kubernetes resources in a DNS provider-agnostic way.
 
@@ -21,20 +21,27 @@ The [FAQ](docs/faq.md) contains additional information and addresses several que
 
 To see ExternalDNS in action, have a look at this [video](https://www.youtube.com/watch?v=9HQ2XgL9YVI).
 
-## The Latest Release: v0.4
+## The Latest Release: v0.5
 
-ExternalDNS' current release is `v0.4`. This version allows you to keep selected zones (via `--domain-filter`) synchronized with Ingresses and Services of `type=LoadBalancer` in various cloud providers:
-* [Google CloudDNS](https://cloud.google.com/dns/docs/)
+ExternalDNS' current release is `v0.5`. This version allows you to keep selected zones (via `--domain-filter`) synchronized with Ingresses and Services of `type=LoadBalancer` in various cloud providers:
+* [Google Cloud DNS](https://cloud.google.com/dns/docs/)
 * [AWS Route 53](https://aws.amazon.com/route53/)
+* [AWS Service Discovery](https://docs.aws.amazon.com/Route53/latest/APIReference/overview-service-discovery.html)
 * [AzureDNS](https://azure.microsoft.com/en-us/services/dns)
-* [CloudFlare](https://www.cloudflare.com/de/dns)
+* [CloudFlare](https://www.cloudflare.com/dns)
 * [DigitalOcean](https://www.digitalocean.com/products/networking)
 * [DNSimple](https://dnsimple.com/)
 * [Infoblox](https://www.infoblox.com/products/dns/)
 * [Dyn](https://dyn.com/dns/)
-* [Shaman](https://github.com/nanopack/shaman)
+* [OpenStack Designate](https://docs.openstack.org/designate/latest/)
+* [PowerDNS](https://www.powerdns.com/)
+* [CoreDNS](https://coredns.io/)
+* [Exoscale](https://www.exoscale.com/dns/)
+* [Oracle Cloud Infrastructure DNS](https://docs.cloud.oracle.com/iaas/Content/DNS/Concepts/dnszonemanagement.htm)
+* [Linode DNS](https://www.linode.com/docs/networking/dns/)
+* [RFC2136](https://tools.ietf.org/html/rfc2136)  
 
-From this release, ExternalDNS can become aware of the records it is managing (enabled via `--registry=txt`), therefore ExternalDNS can safely manage non-empty hosted zones. We strongly encourage you to use `v0.4` with `--registry=txt` enabled and `--txt-owner-id` set to a unique value that doesn't change for the lifetime of your cluster. You might also want to run ExternalDNS in a dry run mode (`--dry-run` flag) to see the changes to be submitted to your DNS Provider API.
+From this release, ExternalDNS can become aware of the records it is managing (enabled via `--registry=txt`), therefore ExternalDNS can safely manage non-empty hosted zones. We strongly encourage you to use `v0.5` (or greater) with `--registry=txt` enabled and `--txt-owner-id` set to a unique value that doesn't change for the lifetime of your cluster. You might also want to run ExternalDNS in a dry run mode (`--dry-run` flag) to see the changes to be submitted to your DNS Provider API.
 
 Note that all flags can be replaced with environment variables; for instance,
 `--dry-run` could be replaced with `EXTERNAL_DNS_DRY_RUN=1`, or
@@ -44,8 +51,11 @@ Note that all flags can be replaced with environment variables; for instance,
 
 The following tutorials are provided:
 
-* [AWS](docs/tutorials/aws.md)
+* [Alibaba Cloud](docs/tutorials/alibabacloud.md)
+* [AWS (Route53)](docs/tutorials/aws.md)
+* [AWS (Service Discovery)](docs/tutorials/aws-sd.md)
 * [Azure](docs/tutorials/azure.md)
+* [CoreDNS](docs/tutorials/coredns.md)
 * [Cloudflare](docs/tutorials/cloudflare.md)
 * [DigitalOcean](docs/tutorials/digitalocean.md)
 * [Infoblox](docs/tutorials/infoblox.md)
@@ -53,6 +63,10 @@ The following tutorials are provided:
 * Google Container Engine
 	* [Using Google's Default Ingress Controller](docs/tutorials/gke.md)
 	* [Using the Nginx Ingress Controller](docs/tutorials/nginx-ingress.md)
+* [Exoscale](docs/tutorials/exoscale.md)
+* [Oracle Cloud Infrastructure (OCI) DNS](docs/tutorials/oracle.md)
+* [Linode](docs/tutorials/linode.md)
+* [RFC2136](docs/tutorials/rfc2136.md)
 
 ## Running Locally
 
@@ -153,12 +167,23 @@ Here's a rough outline on what is to come (subject to change):
 - [x] Support for multiple zones
 - [x] Ownership System
 
-### v0.4 - _current version_
+### v0.4
 
 - [x] Support for AzureDNS
 - [x] Support for CloudFlare
 - [x] Support for DigitalOcean
 - [x] Multiple DNS names per Service
+
+### v0.5 - _current version_
+
+- [x] Support for creating DNS records to multiple targets (for Google and AWS)
+- [x] Support for OpenStack Designate
+- [x] Support for PowerDNS
+- [x] Support for Linode
+
+### v0.6
+
+- [ ] Ability to replace Kops' [DNS Controller](https://github.com/kubernetes/kops/tree/master/dns-controller) (This could also directly become `v1.0`)
 
 ### v1.0
 
@@ -168,11 +193,11 @@ Here's a rough outline on what is to come (subject to change):
 
 ### Yet to be defined
 
-* Support for CoreDNS and Azure DNS
+* Support for CoreDNS
 * Support for record weights
 * Support for different behavioral policies
 * Support for Services with `type=NodePort`
-* Support for TPRs
+* Support for CRDs
 * Support for more advanced DNS record configurations
 
 Have a look at [the milestones](https://github.com/kubernetes-incubator/external-dns/milestones) to get an idea of where we currently stand.

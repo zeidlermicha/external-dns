@@ -38,6 +38,9 @@ const (
 	DigitalOceanDelete = "DELETE"
 	// DigitalOceanUpdate is a ChangeAction enum value
 	DigitalOceanUpdate = "UPDATE"
+
+	// digitalOceanRecordTTL is the default TTL value
+	digitalOceanRecordTTL = 300
 )
 
 // DigitalOceanProvider is an implementation of Provider for Digital Ocean's DNS.
@@ -106,7 +109,15 @@ func (p *DigitalOceanProvider) Records() ([]*endpoint.Endpoint, error) {
 
 		for _, r := range records {
 			if supportedRecordType(r.Type) {
-				endpoints = append(endpoints, endpoint.NewEndpoint(r.Name, r.Data, r.Type))
+				name := r.Name + "." + zone.Name
+
+				// root name is identified by @ and should be
+				// translated to zone name for the endpoint entry.
+				if r.Name == "@" {
+					name = zone.Name
+				}
+
+				endpoints = append(endpoints, endpoint.NewEndpoint(name, r.Type, r.Data))
 			}
 		}
 	}
@@ -188,6 +199,7 @@ func (p *DigitalOceanProvider) submitChanges(changes []*DigitalOceanChange) erro
 			logFields := log.Fields{
 				"record": change.ResourceRecordSet.Name,
 				"type":   change.ResourceRecordSet.Type,
+				"ttl":    change.ResourceRecordSet.TTL,
 				"action": change.Action,
 				"zone":   zoneName,
 			}
@@ -197,14 +209,29 @@ func (p *DigitalOceanProvider) submitChanges(changes []*DigitalOceanChange) erro
 			if p.DryRun {
 				continue
 			}
-			changeName := strings.TrimSuffix(change.ResourceRecordSet.Name, "."+zoneName)
+
+			change.ResourceRecordSet.Name = strings.TrimSuffix(change.ResourceRecordSet.Name, "."+zoneName)
+
+			// record at the root should be defined as @ instead of
+			// the full domain name
+			if change.ResourceRecordSet.Name == zoneName {
+				change.ResourceRecordSet.Name = "@"
+			}
+
+			// for some reason the DO API requires the '.' at the end of "data" in case of CNAME request
+			// Example: {"type":"CNAME","name":"hello","data":"www.example.com."}
+			if change.ResourceRecordSet.Type == endpoint.RecordTypeCNAME {
+				change.ResourceRecordSet.Data += "."
+			}
+
 			switch change.Action {
 			case DigitalOceanCreate:
 				_, _, err = p.Client.CreateRecord(context.TODO(), zoneName,
 					&godo.DomainRecordEditRequest{
 						Data: change.ResourceRecordSet.Data,
-						Name: changeName,
+						Name: change.ResourceRecordSet.Name,
 						Type: change.ResourceRecordSet.Type,
+						TTL:  change.ResourceRecordSet.TTL,
 					})
 				if err != nil {
 					return err
@@ -220,8 +247,9 @@ func (p *DigitalOceanProvider) submitChanges(changes []*DigitalOceanChange) erro
 				_, _, err = p.Client.EditRecord(context.TODO(), zoneName, recordID,
 					&godo.DomainRecordEditRequest{
 						Data: change.ResourceRecordSet.Data,
-						Name: changeName,
+						Name: change.ResourceRecordSet.Name,
 						Type: change.ResourceRecordSet.Type,
+						TTL:  change.ResourceRecordSet.TTL,
 					})
 				if err != nil {
 					return err
@@ -255,12 +283,19 @@ func newDigitalOceanChanges(action string, endpoints []*endpoint.Endpoint) []*Di
 }
 
 func newDigitalOceanChange(action string, endpoint *endpoint.Endpoint) *DigitalOceanChange {
+	// no annotation results in a TTL of 0, default to 300 for consistency with other providers
+	var ttl = digitalOceanRecordTTL
+	if endpoint.RecordTTL.IsConfigured() {
+		ttl = int(endpoint.RecordTTL)
+	}
+
 	change := &DigitalOceanChange{
 		Action: action,
 		ResourceRecordSet: godo.DomainRecord{
 			Name: endpoint.DNSName,
 			Type: endpoint.RecordType,
 			Data: endpoint.Targets[0],
+			TTL:  ttl,
 		},
 	}
 	return change

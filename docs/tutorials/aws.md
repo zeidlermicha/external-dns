@@ -31,6 +31,8 @@ This tutorial describes how to setup ExternalDNS for usage within a Kubernetes c
 }
 ```
 
+When running on AWS, you need to make sure that your nodes (on which External DNS runs) have the IAM instance profile with the above IAM role assigned (either directly or via something like [kube2iam](https://github.com/jtblin/kube2iam)).
+
 ## Set up a hosted zone
 
 *If you prefer to try-out ExternalDNS in one of the existing hosted-zones you can skip this step*
@@ -81,7 +83,7 @@ spec:
     spec:
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:v0.4.8
+        image: registry.opensource.zalan.do/teapot/external-dns:latest
         args:
         - --source=service
         - --source=ingress
@@ -109,9 +111,15 @@ rules:
 - apiGroups: [""]
   resources: ["services"]
   verbs: ["get","watch","list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get","watch","list"]
 - apiGroups: ["extensions"] 
   resources: ["ingresses"] 
   verbs: ["get","watch","list"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1beta1
 kind: ClusterRoleBinding
@@ -141,7 +149,7 @@ spec:
       serviceAccountName: external-dns
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:v0.4.8
+        image: registry.opensource.zalan.do/teapot/external-dns:latest
         args:
         - --source=service
         - --source=ingress
@@ -163,6 +171,13 @@ This list is not the full list, but a few arguments that where chosen.
 
 `aws-zone-type` allows filtering for private and public zones
 
+## Annotations
+
+Annotations which are specific to AWS.
+
+### alias
+
+`external-dns.alpha.kubernetes.io/alias` if set to `true` on an ingress, it will create an ALIAS record when the target is an ALIAS as well.
 
 ## Verify ExternalDNS works (Ingress example)
 

@@ -1,3 +1,120 @@
+## v0.5.9 - 2018-11-22
+
+  - Core: Update delivery.yaml to new format (#782) @linki
+  - Core: Adjust gometalinter timeout by setting env var (#778) @njuettner
+  - Provider **Google**: Panic assignment to entry in nil map (#776) @njuettner
+  - Docs: Fix typos (#769) @mooncak
+  - Docs: Remove duplicated words (#768) @mooncak
+  - Provider **Alibaba**: Alibaba Cloud Provider Fix Multiple Subdomains Bug (#767) @xianlubird
+  - Core: Add Traefik to the supported list of ingress controllers (#764) @coderanger
+  - Provider **Dyn**: Fix some typos in returned messages in dyn.go (#760) @AdamDang
+  - Docs: Update Azure documentation (#756) @pascalgn
+  - Provider **Oracle**: Oracle doc fix (add "key:" to secret) (#750) @CaptTofu
+  - Core: Docker MAINTAINER is deprecated - using LABEL instead (#747) @helgi
+  - Core: Feature add alias annotation (#742) @vaegt
+  - Provider **RFC2136**: Fix rfc2136 - setup fails issue and small docs (#741) @antlad
+  - Core: Fix nil map access of endpoint labels (#739) @shashidharatd
+  - Provider **PowerDNS**: PowerDNS Add DomainFilter support (#737) @ottoyiu
+  - Core: Fix domain-filter matching logic to not match similar domain names (#736) @ottoyiu
+  - Core: Matching entire string for wildcard in txt records with prefixes (#727) @etopeter
+  - Provider **Designate**: Fix TLS issue with OpenStack auth (#717) @FestivalBobcats
+  - Provider **AWS**: Add helper script to update route53 txt owner entries (#697) @efranford
+  - Provider **CoreDNS**: Migrate to use etcd client v3 for CoreDNS provider (#686) @shashidharatd
+  - Core: Create a non-root user to run the container process (#684) @coderanger
+  - Core: Do not replace TXT records with A/CNAME records in planner (#581) @jchv
+
+## v0.5.8 - 2018-10-11
+
+  - New Provider: RFC2136 (#702) @antlad
+  - Add Linode to list of supported providers (#730) @cliedeman
+  - Correctly populate target health check on existing records (#724) @linki
+  - Don't erase Endpoint labels (#713) @sebastien-prudhomme
+
+## v0.5.7 - 2018-09-27
+
+  - Pass all relevant CLI flags to AWS provider (#719) @linki
+  - Replace glog with a noop logger (#714) @linki
+  - Fix handling of custom TTL values with Google DNS. (#704) @kevinmdavis
+  - Continue even if node listing fails (#701) @pascalgn
+  - Fix Host field in HTTP request when using pdns provider (#700) @peterbale
+  - Allow AWS batching to fully sync on each run (#699) @bartelsielski
+
+## v0.5.6 - 2018-09-07
+  
+  - Alibaba Cloud (#696) @xianlubird  
+  - Add Source implementation for Istio Gateway (#694) @jonasrmichel
+  - CRD source based on getting endpoints from CRD (#657) @shashidharatd
+  - Add filter by service type feature (#653) @Devatoria
+  - Add generic metrics for Source & Registry Errors (#652) @wleese
+
+## v0.5.5 - 2018-08-17
+
+  - Configure req timeout calling k8s APIs (#681) @jvassev
+  - Adding assume role to aws_sd provider (#676) @lb-saildrone
+  - Dyn: cache records per zone using zone's serial number (#675) @jvassev
+  - Linode provider (#674) @cliedeman
+  - Cloudflare Link Language Specificity (#673) @christopherhein
+  - Retry calls to dyn on ErrRateLimited (#671) @jvassev
+  - Add support to configure TTLs on DigitalOcean (#667) @andrewsomething
+  - Log level warning option (#664) @george-angel
+  - Fix usage of k8s.io/client-go package (#655) @shashidharatd
+  - Fix for empty target annotation (#647) @rdrgmnzs
+  - Fix log message for #592 when no updates in hosted zones (#634) @audip
+  - Add aws-evaluate-target-health flag (#628) @peterbale
+  - Exoscale provider (#625) @FaKod @greut
+  - Oracle Cloud Infrastructure DNS provider (#626) @prydie
+  - Update DO CNAME type API request to prevent error 422 (#624) @nenadilic84
+  - Fix typo in cloudflare.md (#623) @derekperkins
+  - Infoblox-go-client was only setting timeout for http.Transport.ResponseHeaderTimeout instead of for http.Client (#615) @khrisrichardson
+  - Adding a flag to optionally publish hostIP instead of podIP for headless services (#597) @Arttii
+
+## v0.5.4 - 2018-06-28
+
+  - Only store endpoints with their labels in the cache (#612) @njuettner
+  - Read hostnames from spec.tls.hosts on Ingress object (#611) @ysoldak
+  - Reorder provider/aws suitable-zones tests (#608) @elordahl
+  - Adds TLS flags for pdns provider (#607) @jhoch-palantir
+  - Update RBAC for external-dns to list nodes (#600) @njuettner
+  - Add aws max change count flag (#596) @peterbale
+  - AWS provider: Properly check suitable domains (#594) @elordahl
+  - Annotation with upper-case hostnames block further updates (#579) @njuettner
+  
+## v0.5.3 - 2018-06-15
+
+  - Print a message if no hosted zones match (aws provider) (#592) @svend
+  - Add support for NodePort services (#559) @grimmy
+  - Update azure.md to fix protocol value (#593) @JasonvanBrackel
+  - Add cache to limit calls to providers (#589) @jessfraz
+  - Add Azure MSI support (#578) @r7vme
+  - CoreDNS/SkyDNS provider (#253) @istalker2
+
+## v0.5.2 - 2018-05-31
+
+  - DNSimple: Make DNSimple tolerant of unknown zones (#574) @jbowes
+  - Cloudflare: Custom record TTL (#572) @njuettner
+  - AWS ServiceDiscovery: Implementation of AWS ServiceDiscovery provider (#483) @vanekjar
+  - Update docs to latest changes (#563) @Raffo
+  - New source - connector (#552) @shashidharatd
+  - Update AWS SDK dependency to v1.13.7 @vanekjar
+
+## v0.5.1 - 2018-05-16
+
+  - Refactor implementation of sync loop to use `time.Ticker` (#553) @r0fls
+  - Document how ExternalDNS gets permission to change AWS Route53 entries (#557) @hjacobs
+  - Fix CNAME support for the PowerDNS provider (#547) @kciredor
+  - Add support for hostname annotation in Ingress resource (#545) @rajatjindal
+  - Fix for TTLs being ignored on headless Services (#546) @danbondd
+  - Fix failing tests by giving linters more time to do their work (#548) @linki
+  - Fix misspelled flag for the OpenStack Designate provider (#542) @zentale
+  - Document additional RBAC rules needed to read Pods (#538) @danbondd
+
+## v0.5.0 - 2018-04-23
+
+  - Google: Correctly filter records that don't match all filters (#533) @prydie @linki
+  - AWS: add support for AWS Network Load Balancers (#531) @linki
+  - Add a flag that allows FQDN template and annotations to combine (#513) @helgi
+  - Fix: Use PodIP instead of HostIP for headless Services (#498) @nrobert13
+  - Support a comma separated list for the FQDN template (#512) @helgi
   - Google Provider: Add auto-detection of Google Project when running on GCP (#492) @drzero42
   - Add custom TTL support for DNSimple (#477) @jbowes
   - Fix docker build and delete vendor files which were not deleted (#473) @njuettner

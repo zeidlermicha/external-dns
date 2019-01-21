@@ -18,7 +18,6 @@ package provider
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"cloud.google.com/go/compute/metadata"
@@ -143,10 +142,10 @@ func NewGoogleProvider(project string, domainFilter DomainFilter, zoneIDFilter Z
 	}
 
 	provider := &GoogleProvider{
-		project:      project,
-		domainFilter: domainFilter,
-		zoneIDFilter: zoneIDFilter,
-		dryRun:       dryRun,
+		project:                  project,
+		domainFilter:             domainFilter,
+		zoneIDFilter:             zoneIDFilter,
+		dryRun:                   dryRun,
 		resourceRecordSetsClient: resourceRecordSetsService{dnsClient.ResourceRecordSets},
 		managedZonesClient:       managedZonesService{dnsClient.ManagedZones},
 		changesClient:            changesService{dnsClient.Changes},
@@ -161,7 +160,7 @@ func (p *GoogleProvider) Zones() (map[string]*dns.ManagedZone, error) {
 
 	f := func(resp *dns.ManagedZonesListResponse) error {
 		for _, zone := range resp.ManagedZones {
-			if p.domainFilter.Match(zone.DnsName) || p.zoneIDFilter.Match(fmt.Sprintf("%v", zone.Id)) {
+			if p.domainFilter.Match(zone.DnsName) && p.zoneIDFilter.Match(fmt.Sprintf("%v", zone.Id)) {
 				zones[zone.Name] = zone
 				log.Debugf("Matched %s (zone: %s)", zone.DnsName, zone.Name)
 			} else {
@@ -204,17 +203,7 @@ func (p *GoogleProvider) Records() (endpoints []*endpoint.Endpoint, _ error) {
 			if !supportedRecordType(r.Type) {
 				continue
 			}
-			ep := &endpoint.Endpoint{
-				DNSName:    strings.TrimSuffix(r.Name, "."),
-				RecordType: r.Type,
-				Targets:    make(endpoint.Targets, 0, len(r.Rrdatas)),
-			}
-			for _, rr := range r.Rrdatas {
-				// each page is processed sequentially, no need for a mutex here.
-				ep.Targets = append(ep.Targets, strings.TrimSuffix(rr, "."))
-			}
-			sort.Sort(ep.Targets)
-			endpoints = append(endpoints, ep)
+			endpoints = append(endpoints, endpoint.NewEndpointWithTTL(r.Name, r.Type, endpoint.TTL(r.Ttl), r.Rrdatas...))
 		}
 
 		return nil

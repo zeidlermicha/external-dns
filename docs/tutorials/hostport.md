@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:v0.4.8
+        image: registry.opensource.zalan.do/teapot/external-dns:latest
         args:
         - --debug
         - --source=service
@@ -52,9 +52,15 @@ rules:
 - apiGroups: [""]
   resources: ["services"]
   verbs: ["get","watch","list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get","watch","list"]
 - apiGroups: ["extensions"] 
   resources: ["ingresses"] 
   verbs: ["get","watch","list"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1beta1
 kind: ClusterRoleBinding
@@ -81,7 +87,7 @@ spec:
       serviceAccountName: external-dns
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:v0.4.8
+        image: registry.opensource.zalan.do/teapot/external-dns:latest
         args:
         - --debug
         - --source=service
@@ -182,5 +188,4 @@ kafka-0.ksvc.example.org
 kafka-1.ksvc.example.org
 kafka-2.ksvc.example.org
 ```
-
 

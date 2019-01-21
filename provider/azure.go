@@ -40,13 +40,14 @@ const (
 )
 
 type config struct {
-	Cloud          string `json:"cloud" yaml:"cloud"`
-	TenantID       string `json:"tenantId" yaml:"tenantId"`
-	SubscriptionID string `json:"subscriptionId" yaml:"subscriptionId"`
-	ResourceGroup  string `json:"resourceGroup" yaml:"resourceGroup"`
-	Location       string `json:"location" yaml:"location"`
-	ClientID       string `json:"aadClientId" yaml:"aadClientId"`
-	ClientSecret   string `json:"aadClientSecret" yaml:"aadClientSecret"`
+	Cloud                       string `json:"cloud" yaml:"cloud"`
+	TenantID                    string `json:"tenantId" yaml:"tenantId"`
+	SubscriptionID              string `json:"subscriptionId" yaml:"subscriptionId"`
+	ResourceGroup               string `json:"resourceGroup" yaml:"resourceGroup"`
+	Location                    string `json:"location" yaml:"location"`
+	ClientID                    string `json:"aadClientId" yaml:"aadClientId"`
+	ClientSecret                string `json:"aadClientSecret" yaml:"aadClientSecret"`
+	UseManagedIdentityExtension bool   `json:"useManagedIdentityExtension" yaml:"useManagedIdentityExtension"`
 }
 
 // ZonesClient is an interface of dns.ZoneClient that can be stubbed for testing.
@@ -102,19 +103,14 @@ func NewAzureProvider(configFile string, domainFilter DomainFilter, zoneIDFilter
 		}
 	}
 
-	oauthConfig, err := adal.NewOAuthConfig(environment.ActiveDirectoryEndpoint, cfg.TenantID)
+	token, err := getAccessToken(cfg, environment)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve OAuth config: %v", err)
+		return nil, fmt.Errorf("failed to get token: %v", err)
 	}
 
-	token, err := adal.NewServicePrincipalToken(*oauthConfig, cfg.ClientID, cfg.ClientSecret, environment.ResourceManagerEndpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create service principal token: %v", err)
-	}
-
-	zonesClient := dns.NewZonesClient(cfg.SubscriptionID)
+	zonesClient := dns.NewZonesClientWithBaseURI(environment.ResourceManagerEndpoint, cfg.SubscriptionID)
 	zonesClient.Authorizer = autorest.NewBearerAuthorizer(token)
-	recordsClient := dns.NewRecordSetsClient(cfg.SubscriptionID)
+	recordsClient := dns.NewRecordSetsClientWithBaseURI(environment.ResourceManagerEndpoint, cfg.SubscriptionID)
 	recordsClient.Authorizer = autorest.NewBearerAuthorizer(token)
 
 	provider := &AzureProvider{
@@ -126,6 +122,41 @@ func NewAzureProvider(configFile string, domainFilter DomainFilter, zoneIDFilter
 		recordsClient: recordsClient,
 	}
 	return provider, nil
+}
+
+// getAccessToken retrieves Azure API access token.
+func getAccessToken(cfg config, environment azure.Environment) (*adal.ServicePrincipalToken, error) {
+	// Try to retrive token with MSI.
+	if cfg.UseManagedIdentityExtension {
+		log.Info("Using managed identity extension to retrieve access token for Azure API.")
+		msiEndpoint, err := adal.GetMSIVMEndpoint()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get the managed service identity endpoint: %v", err)
+		}
+
+		token, err := adal.NewServicePrincipalTokenFromMSI(msiEndpoint, environment.ServiceManagementEndpoint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create the managed service identity token: %v", err)
+		}
+		return token, nil
+	}
+
+	// Try to retrieve token with service principal credentials.
+	if len(cfg.ClientID) > 0 && len(cfg.ClientSecret) > 0 {
+		log.Info("Using client_id+client_secret to retrieve access token for Azure API.")
+		oauthConfig, err := adal.NewOAuthConfig(environment.ActiveDirectoryEndpoint, cfg.TenantID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve OAuth config: %v", err)
+		}
+
+		token, err := adal.NewServicePrincipalToken(*oauthConfig, cfg.ClientID, cfg.ClientSecret, environment.ResourceManagerEndpoint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create service principal token: %v", err)
+		}
+		return token, nil
+	}
+
+	return nil, fmt.Errorf("no credentials provided for Azure API")
 }
 
 // Records gets the current records.
@@ -158,7 +189,7 @@ func (p *AzureProvider) Records() (endpoints []*endpoint.Endpoint, _ error) {
 				ttl = endpoint.TTL(*recordSet.TTL)
 			}
 
-			ep := endpoint.NewEndpointWithTTL(name, target, recordType, endpoint.TTL(ttl))
+			ep := endpoint.NewEndpointWithTTL(name, recordType, endpoint.TTL(ttl), target)
 			log.Debugf(
 				"Found %s record for '%s' with target '%s'.",
 				ep.RecordType,

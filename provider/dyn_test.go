@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/nesv/go-dynect/dynect"
 	"github.com/stretchr/testify/assert"
@@ -169,30 +168,14 @@ func TestDynMerge_NoUpdateIfTTLUnchanged(t *testing.T) {
 	assert.Equal(t, 0, len(merged))
 }
 
-func TestDyn_extractTarget(t *testing.T) {
-	tests := []struct {
-		recordType string
-		block      *dynect.DataBlock
-		target     string
-	}{
-		{"A", &dynect.DataBlock{Address: "address"}, "address"},
-		{"CNAME", &dynect.DataBlock{CName: "name."}, "name"}, // note trailing dot is trimmed for CNAMEs
-		{"TXT", &dynect.DataBlock{TxtData: "text."}, "text."},
-	}
-
-	for _, tc := range tests {
-		assert.Equal(t, tc.target, extractTarget(tc.recordType, tc.block))
-	}
-}
-
 func TestDyn_endpointToRecord(t *testing.T) {
 	tests := []struct {
 		ep        *endpoint.Endpoint
 		extractor func(*dynect.DataBlock) string
 	}{
-		{endpoint.NewEndpoint("address", "the-target", "A"), func(b *dynect.DataBlock) string { return b.Address }},
-		{endpoint.NewEndpoint("cname", "the-target", "CNAME"), func(b *dynect.DataBlock) string { return b.CName }},
-		{endpoint.NewEndpoint("text", "the-target", "TXT"), func(b *dynect.DataBlock) string { return b.TxtData }},
+		{endpoint.NewEndpoint("address", "A", "the-target"), func(b *dynect.DataBlock) string { return b.Address }},
+		{endpoint.NewEndpoint("cname", "CNAME", "the-target"), func(b *dynect.DataBlock) string { return b.CName }},
+		{endpoint.NewEndpoint("text", "TXT", "the-target"), func(b *dynect.DataBlock) string { return b.TxtData }},
 	}
 
 	for _, tc := range tests {
@@ -213,11 +196,11 @@ func TestDyn_buildLinkToRecord(t *testing.T) {
 		ep   *endpoint.Endpoint
 		link string
 	}{
-		{endpoint.NewEndpoint("sub.the-target.example.com", "address", "A"), "ARecord/example.com/sub.the-target.example.com/"},
-		{endpoint.NewEndpoint("the-target.example.com", "cname", "CNAME"), "CNAMERecord/example.com/the-target.example.com/"},
-		{endpoint.NewEndpoint("the-target.example.com", "text", "TXT"), "TXTRecord/example.com/the-target.example.com/"},
-		{endpoint.NewEndpoint("the-target.google.com", "text", "TXT"), ""},
-		{endpoint.NewEndpoint("mail.example.com", "text", "TXT"), ""},
+		{endpoint.NewEndpoint("sub.the-target.example.com", "A", "address"), "ARecord/example.com/sub.the-target.example.com/"},
+		{endpoint.NewEndpoint("the-target.example.com", "CNAME", "cname"), "CNAMERecord/example.com/the-target.example.com/"},
+		{endpoint.NewEndpoint("the-target.example.com", "TXT", "text"), "TXTRecord/example.com/the-target.example.com/"},
+		{endpoint.NewEndpoint("the-target.google.com", "TXT", "text"), ""},
+		{endpoint.NewEndpoint("mail.example.com", "TXT", "text"), ""},
 		{nil, ""},
 	}
 
@@ -264,38 +247,47 @@ func TestDyn_fixMissingTTL(t *testing.T) {
 	assert.Equal(t, "1992", fixMissingTTL(endpoint.TTL(111), 1992))
 }
 
-func TestDyn_cachePut(t *testing.T) {
-	c := cache{
-		contents: make(map[string]*entry),
+func TestDyn_Snapshot(t *testing.T) {
+	snap := ZoneSnapshot{
+		serials:   map[string]int{},
+		endpoints: map[string][]*endpoint.Endpoint{},
 	}
 
-	c.Put("link", &endpoint.Endpoint{
-		DNSName:    "name",
-		Targets:    endpoint.Targets{"target"},
-		RecordTTL:  endpoint.TTL(10000),
-		RecordType: "A",
-	})
-
-	found := c.Get("link")
-	assert.NotNil(t, found)
-}
-
-func TestDyn_cachePutExpired(t *testing.T) {
-	c := cache{
-		contents: make(map[string]*entry),
+	recs := []*endpoint.Endpoint{
+		{
+			DNSName:    "name",
+			Targets:    endpoint.Targets{"target"},
+			RecordTTL:  endpoint.TTL(10000),
+			RecordType: "A",
+		},
 	}
 
-	c.Put("link", &endpoint.Endpoint{
-		DNSName:    "name",
-		Targets:    endpoint.Targets{"target"},
-		RecordTTL:  endpoint.TTL(0),
-		RecordType: "A",
-	})
+	snap.StoreRecordsForSerial("test", 12, recs)
 
-	time.Sleep(2 * time.Second)
+	cached := snap.GetRecordsForSerial("test", 12)
+	assert.Equal(t, recs, cached)
 
-	found := c.Get("link")
-	assert.Nil(t, found)
+	cached = snap.GetRecordsForSerial("test", 999)
+	assert.Nil(t, cached)
 
-	assert.Nil(t, c.Get("no-such-records"))
+	cached = snap.GetRecordsForSerial("sfas", 12)
+	assert.Nil(t, cached)
+
+	recs2 := []*endpoint.Endpoint{
+		{
+			DNSName:    "name",
+			Targets:    endpoint.Targets{"target2"},
+			RecordTTL:  endpoint.TTL(100),
+			RecordType: "CNAME",
+		},
+	}
+
+	// update zone with different records and newer serial
+	snap.StoreRecordsForSerial("test", 13, recs2)
+
+	cached = snap.GetRecordsForSerial("test", 13)
+	assert.Equal(t, recs2, cached)
+
+	cached = snap.GetRecordsForSerial("test", 12)
+	assert.Nil(t, cached)
 }

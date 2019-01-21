@@ -54,6 +54,16 @@ $ gcloud dns record-sets transaction execute --zone "gcp-zalan-do"
 
 ## Deploy ExternalDNS
 
+### Role-Based Access Control (RBAC)
+
+[RBAC]("https://cloud.google.com/kubernetes-engine/docs/how-to/role-based-access-control") is enabled by default on all Container clusters which are running Kubernetes version 1.6 or higher.
+
+Because of the way Container Engine checks permissions when you create a Role or ClusterRole, you must first create a RoleBinding that grants you all of the permissions included in the role you want to create.
+
+```console
+kubectl create clusterrolebinding your-user-cluster-admin-binding --clusterrole=cluster-admin --user=your.google.cloud.email@example.org
+```
+
 Connect your `kubectl` client to the cluster you just created.
 
 ```console
@@ -76,10 +86,9 @@ spec:
       labels:
         app: external-dns
     spec:
-      serviceAccountName: external-dns
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:v0.4.8
+        image: registry.opensource.zalan.do/teapot/external-dns:latest
         args:
         - --source=service
         - --source=ingress
@@ -106,9 +115,15 @@ rules:
 - apiGroups: [""]
   resources: ["services"]
   verbs: ["get","watch","list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get","watch","list"]
 - apiGroups: ["extensions"] 
   resources: ["ingresses"] 
   verbs: ["get","watch","list"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1beta1
 kind: ClusterRoleBinding
@@ -135,9 +150,10 @@ spec:
       labels:
         app: external-dns
     spec:
+      serviceAccountName: external-dns
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:v0.4.8
+        image: registry.opensource.zalan.do/teapot/external-dns:latest
         args:
         - --source=service
         - --source=ingress

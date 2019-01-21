@@ -21,12 +21,15 @@ All sources live in package `source`.
 
 * `ServiceSource`: collects all Services that have an external IP and returns them as Endpoint objects. The desired DNS name corresponds to an annotation set on the Service or is compiled from the Service attributes via the FQDN Go template string.
 * `IngressSource`: collects all Ingresses that have an external IP and returns them as Endpoint objects. The desired DNS name corresponds to the host rules defined in the Ingress object.
+* `IstioGatewaySource`: collects all Istio Gateways and returns them as Endpoint objects. The desired DNS name corresponds to the hosts listed within the servers spec of each Gateway object.
 * `FakeSource`: returns a random list of Endpoints for the purpose of testing providers without having access to a Kubernetes cluster.
+* `ConnectorSource`: returns a list of Endpoint objects which are served by a tcp server configured through `connector-source-server` flag.
+* `CRDSource`: returns a list of Endpoint objects sourced from the spec of CRD objects. For more details refer to [CRD source](../crd-source.md) documentation.
 
 ### Providers
 
 Providers are an abstraction over any kind of sink for desired Endpoints, e.g.:
-* storing them in Google CloudDNS
+* storing them in Google Cloud DNS
 * printing them to stdout for testing purposes
 * fanning out to multiple nested providers
 
@@ -43,7 +46,7 @@ The interface tries to be generic and assumes a flat list of records for both fu
 
 All providers live in package `provider`.
 
-* `GoogleProvider`: returns and creates DNS records in Google CloudDNS
+* `GoogleProvider`: returns and creates DNS records in Google Cloud DNS
 * `AWSProvider`: returns and creates DNS records in AWS Route 53
 * `AzureProvider`: returns and creates DNS records in Azure DNS
 * `InMemoryProvider`: Keeps a list of records in local memory

@@ -21,6 +21,7 @@ import (
 
 	"github.com/kubernetes-incubator/external-dns/endpoint"
 	"github.com/kubernetes-incubator/external-dns/internal/testutils"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -28,6 +29,7 @@ type PlanTestSuite struct {
 	suite.Suite
 	fooV1Cname             *endpoint.Endpoint
 	fooV2Cname             *endpoint.Endpoint
+	fooV2TXT               *endpoint.Endpoint
 	fooV2CnameNoLabel      *endpoint.Endpoint
 	fooV3CnameSameResource *endpoint.Endpoint
 	fooA5                  *endpoint.Endpoint
@@ -63,6 +65,10 @@ func (suite *PlanTestSuite) SetupTest() {
 		Labels: map[string]string{
 			endpoint.ResourceLabelKey: "ingress/default/foo-v2",
 		},
+	}
+	suite.fooV2TXT = &endpoint.Endpoint{
+		DNSName:    "foo",
+		RecordType: "TXT",
 	}
 	suite.fooV2CnameNoLabel = &endpoint.Endpoint{
 		DNSName:    "foo",
@@ -261,6 +267,27 @@ func (suite *PlanTestSuite) TestDifferentTypes() {
 	validateEntries(suite.T(), changes.Delete, expectedDelete)
 }
 
+func (suite *PlanTestSuite) TestIgnoreTXT() {
+	current := []*endpoint.Endpoint{suite.fooV2TXT}
+	desired := []*endpoint.Endpoint{suite.fooV2Cname}
+	expectedCreate := []*endpoint.Endpoint{suite.fooV2Cname}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
+		Policies: []Policy{&SyncPolicy{}},
+		Current:  current,
+		Desired:  desired,
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
 func (suite *PlanTestSuite) TestRemoveEndpoint() {
 	current := []*endpoint.Endpoint{suite.fooV1Cname, suite.bar192A}
 	desired := []*endpoint.Endpoint{suite.fooV1Cname}
@@ -355,5 +382,61 @@ func TestPlan(t *testing.T) {
 func validateEntries(t *testing.T, entries, expected []*endpoint.Endpoint) {
 	if !testutils.SameEndpoints(entries, expected) {
 		t.Fatalf("expected %q to match %q", entries, expected)
+	}
+}
+
+func TestNormalizeDNSName(t *testing.T) {
+	records := []struct {
+		dnsName string
+		expect  string
+	}{
+		{
+			"3AAAA.FOO.BAR.COM    ",
+			"3aaaa.foo.bar.com.",
+		},
+		{
+			"   example.foo.com.",
+			"example.foo.com.",
+		},
+		{
+			"example123.foo.com ",
+			"example123.foo.com.",
+		},
+		{
+			"foo",
+			"foo.",
+		},
+		{
+			"123foo.bar",
+			"123foo.bar.",
+		},
+		{
+			"foo.com",
+			"foo.com.",
+		},
+		{
+			"foo.com.",
+			"foo.com.",
+		},
+		{
+			"foo123.COM",
+			"foo123.com.",
+		},
+		{
+			"my-exaMple3.FOO.BAR.COM",
+			"my-example3.foo.bar.com.",
+		},
+		{
+			"   my-example1214.FOO-1235.BAR-foo.COM   ",
+			"my-example1214.foo-1235.bar-foo.com.",
+		},
+		{
+			"my-example-my-example-1214.FOO-1235.BAR-foo.COM",
+			"my-example-my-example-1214.foo-1235.bar-foo.com.",
+		},
+	}
+	for _, r := range records {
+		gotName := normalizeDNSName(r.dnsName)
+		assert.Equal(t, r.expect, gotName)
 	}
 }

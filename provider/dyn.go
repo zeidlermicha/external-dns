@@ -26,6 +26,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/nesv/go-dynect/dynect"
+	"github.com/sanyu/dynectsoap/dynectsoap"
 
 	"github.com/kubernetes-incubator/external-dns/endpoint"
 	"github.com/kubernetes-incubator/external-dns/plan"
@@ -34,9 +35,9 @@ import (
 const (
 	// 10 minutes default timeout if not configured using flags
 	dynDefaultTTL = 600
-	// can store 20000 entries globally, that's about 4MB of memory
-	// may be made configurable in the future but 20K records seems like enough for a few zones
-	cacheMaxSize = 20000
+
+	// when rate limit is hit retry up to 5 times after sleep 1m between retries
+	dynMaxRetriesOnErrRateLimited = 5
 
 	// two consecutive bad logins happen at least this many seconds appart
 	// While it is easy to get the username right, misconfiguring the password
@@ -48,50 +49,11 @@ const (
 	restAPIPrefix = "/REST/"
 )
 
-// A simple non-thread-safe cache with TTL. The TTL of the records is used here to
-// This cache is used to save on requests to DynAPI
-type cache struct {
-	contents map[string]*entry
-}
-
-type entry struct {
-	expires int64
-	ep      *endpoint.Endpoint
-}
-
-func (c *cache) Put(link string, ep *endpoint.Endpoint) {
-	// flush the whole cache on overflow
-	if len(c.contents) >= cacheMaxSize {
-		c.contents = make(map[string]*entry)
-	}
-
-	c.contents[link] = &entry{
-		ep:      ep,
-		expires: unixNow() + int64(ep.RecordTTL),
-	}
-}
-
 func unixNow() int64 {
 	return int64(time.Now().Unix())
 }
 
-func (c *cache) Get(link string) *endpoint.Endpoint {
-	result, ok := c.contents[link]
-	if !ok {
-		return nil
-	}
-
-	now := unixNow()
-
-	if result.expires < now {
-		delete(c.contents, link)
-		return nil
-	}
-
-	return result.ep
-}
-
-// DynConfig hold connection parameters to dyn.com and interanl state
+// DynConfig hold connection parameters to dyn.com and internal state
 type DynConfig struct {
 	DomainFilter  DomainFilter
 	ZoneIDFilter  ZoneIDFilter
@@ -104,11 +66,46 @@ type DynConfig struct {
 	DynVersion    string
 }
 
+// ZoneSnapshot stores a single recordset for a zone for a single serial
+type ZoneSnapshot struct {
+	serials   map[string]int
+	endpoints map[string][]*endpoint.Endpoint
+}
+
+// GetRecordsForSerial retrieves from memory the last known recordset for the (zone, serial) tuple
+func (snap *ZoneSnapshot) GetRecordsForSerial(zone string, serial int) []*endpoint.Endpoint {
+	lastSerial, ok := snap.serials[zone]
+	if !ok {
+		// no mapping
+		return nil
+	}
+
+	if lastSerial != serial {
+		// outdated mapping
+		return nil
+	}
+
+	endpoints, ok := snap.endpoints[zone]
+	if !ok {
+		// probably a bug
+		return nil
+	}
+
+	return endpoints
+}
+
+// StoreRecordsForSerial associates a result set with a (zone, serial)
+func (snap *ZoneSnapshot) StoreRecordsForSerial(zone string, serial int, records []*endpoint.Endpoint) {
+	snap.serials[zone] = serial
+	snap.endpoints[zone] = records
+}
+
 // DynProvider is the actual interface impl.
 type dynProviderState struct {
 	DynConfig
-	Cache              *cache
 	LastLoginErrorTime int64
+
+	ZoneSnapshot *ZoneSnapshot
 }
 
 // ZoneChange is missing from dynect: https://help.dyn.com/get-zone-changeset-api/
@@ -136,8 +133,8 @@ type ZonePublishRequest struct {
 	Notes   string `json:"notes"`
 }
 
-// ZonePublisResponse holds the status after publish
-type ZonePublisResponse struct {
+// ZonePublishResponse holds the status after publish
+type ZonePublishResponse struct {
 	dynect.ResponseBlock
 	Data map[string]interface{} `json:"data"`
 }
@@ -146,8 +143,9 @@ type ZonePublisResponse struct {
 func NewDynProvider(config DynConfig) (Provider, error) {
 	return &dynProviderState{
 		DynConfig: config,
-		Cache: &cache{
-			contents: make(map[string]*entry),
+		ZoneSnapshot: &ZoneSnapshot{
+			endpoints: map[string][]*endpoint.Endpoint{},
+			serials:   map[string]int{},
 		},
 	}, nil
 }
@@ -158,11 +156,10 @@ func filterAndFixLinks(links []string, filter DomainFilter) []string {
 	var result []string
 	for _, link := range links {
 
-		link = strings.TrimPrefix(link, restAPIPrefix)
+		// link looks like /REST/CNAMERecord/acme.com/exchange.acme.com/349386875
 
-		// covert resource link to just the FQDN so we can filter on it
-		domain := link[0:strings.LastIndexByte(link, '/')]
-		domain = domain[strings.LastIndexByte(domain, '/')+1:]
+		// strip /REST/
+		link = strings.TrimPrefix(link, restAPIPrefix)
 
 		// simply ignore all record types we don't care about
 		if !strings.HasPrefix(link, endpoint.RecordTypeA) &&
@@ -171,6 +168,10 @@ func filterAndFixLinks(links []string, filter DomainFilter) []string {
 			continue
 		}
 
+		// strip ID suffix
+		domain := link[0:strings.LastIndexByte(link, '/')]
+		// strip zone prefix
+		domain = domain[strings.LastIndexByte(domain, '/')+1:]
 		if filter.Match(domain) {
 			result = append(result, link)
 		}
@@ -230,57 +231,65 @@ func merge(updateOld, updateNew []*endpoint.Endpoint) []*endpoint.Endpoint {
 	return result
 }
 
-// extractTarget populates the correct field given a record type.
-// See dynect.DataBlock comments for details. Empty response means nothing
-// was populated - basically an error
-func extractTarget(recType string, data *dynect.DataBlock) string {
-	result := ""
-	if recType == endpoint.RecordTypeA {
-		result = data.Address
+func apiRetryLoop(f func() error) error {
+	var err error
+	for i := 0; i < dynMaxRetriesOnErrRateLimited; i++ {
+		err = f()
+		if err == nil || err != dynect.ErrRateLimited {
+			// success or not retryable error
+			return err
+		}
+
+		// https://help.dyn.com/managed-dns-api-rate-limit/
+		log.Debugf("Rate limit has been hit, sleeping for 1m (%d/%d)", i, dynMaxRetriesOnErrRateLimited)
+		time.Sleep(1 * time.Minute)
 	}
 
-	if recType == endpoint.RecordTypeCNAME {
-		result = data.CName
-		result = strings.TrimSuffix(result, ".")
+	return err
+}
+
+func (d *dynProviderState) allRecordsToEndpoints(records *dynectsoap.GetAllRecordsResponseType) []*endpoint.Endpoint {
+	result := []*endpoint.Endpoint{}
+	//Convert each record to an endpoint
+
+	//Process A Records
+	for _, rec := range records.Data.A_records {
+		ep := &endpoint.Endpoint{
+			DNSName:    rec.Fqdn,
+			RecordTTL:  endpoint.TTL(rec.Ttl),
+			RecordType: rec.Record_type,
+			Targets:    endpoint.Targets{rec.Rdata.Address},
+		}
+		log.Debugf("A record: %v", *ep)
+		result = append(result, ep)
 	}
 
-	if recType == endpoint.RecordTypeTXT {
-		result = data.TxtData
+	//Process CNAME Records
+	for _, rec := range records.Data.Cname_records {
+		ep := &endpoint.Endpoint{
+			DNSName:    rec.Fqdn,
+			RecordTTL:  endpoint.TTL(rec.Ttl),
+			RecordType: rec.Record_type,
+			Targets:    endpoint.Targets{strings.TrimSuffix(rec.Rdata.Cname, ".")},
+		}
+		log.Debugf("CNAME record: %v", *ep)
+		result = append(result, ep)
+	}
+
+	//Process TXT Records
+	for _, rec := range records.Data.Txt_records {
+		ep := &endpoint.Endpoint{
+			DNSName:    rec.Fqdn,
+			RecordTTL:  endpoint.TTL(rec.Ttl),
+			RecordType: rec.Record_type,
+			Targets:    endpoint.Targets{rec.Rdata.Txtdata},
+		}
+		log.Debugf("TXT record: %v", *ep)
+		result = append(result, ep)
 	}
 
 	return result
-}
 
-// recordLinkToEndpoint makes an Endpoint given a resource link optinally making a remote call if a cached entry is expired
-func (d *dynProviderState) recordLinkToEndpoint(client *dynect.Client, recordLink string) (*endpoint.Endpoint, error) {
-	result := d.Cache.Get(recordLink)
-	if result != nil {
-		log.Infof("Using cached endpoint for %s: %+v", recordLink, result)
-		return result, nil
-	}
-
-	rec := dynect.RecordResponse{}
-	err := client.Do("GET", recordLink, nil, &rec)
-	if err != nil {
-		return nil, err
-	}
-
-	// ignore all records but the types supported by external-
-	target := extractTarget(rec.Data.RecordType, &rec.Data.RData)
-	if target == "" {
-		return nil, nil
-	}
-
-	result = &endpoint.Endpoint{
-		DNSName:    rec.Data.FQDN,
-		RecordTTL:  endpoint.TTL(rec.Data.TTL),
-		RecordType: rec.Data.RecordType,
-		Targets:    endpoint.Targets{target},
-	}
-
-	log.Debugf("Fetched new endpoint for %s: %+v", recordLink, result)
-	d.Cache.Put(recordLink, result)
-	return result, nil
 }
 
 func errorOrValue(err error, value interface{}) interface{} {
@@ -305,6 +314,84 @@ func endpointToRecord(ep *endpoint.Endpoint) *dynect.DataBlock {
 	}
 
 	return &result
+}
+
+func (d *dynProviderState) fetchZoneSerial(client *dynect.Client, zone string) (int, error) {
+	var resp dynect.ZoneResponse
+
+	err := client.Do("GET", fmt.Sprintf("Zone/%s", zone), nil, &resp)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return resp.Data.Serial, nil
+}
+
+//Use SOAP to fetch all records with a single call
+func (d *dynProviderState) fetchAllRecordsInZone(zone string) (*dynectsoap.GetAllRecordsResponseType, error) {
+	var err error
+	client := dynectsoap.NewClient("https://api2.dynect.net/SOAP/")
+	service := dynectsoap.NewDynect(client)
+
+	sessionRequest := dynectsoap.SessionLoginRequestType{
+		Customer_name:  d.CustomerName,
+		User_name:      d.Username,
+		Password:       d.Password,
+		Fault_incompat: 0,
+	}
+	resp := dynectsoap.SessionLoginResponseType{}
+	err = apiRetryLoop(func() error {
+		return service.Do(&sessionRequest, &resp)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	token := resp.Data.Token
+
+	logoutRequest := dynectsoap.SessionLogoutRequestType{
+		Token:          token,
+		Fault_incompat: 0,
+	}
+	logoutResponse := dynectsoap.SessionLogoutResponseType{}
+	defer service.Do(&logoutRequest, &logoutResponse)
+
+	req := dynectsoap.GetAllRecordsRequestType{
+		Token:          token,
+		Zone:           zone,
+		Fault_incompat: 0,
+	}
+	records := dynectsoap.GetAllRecordsResponseType{}
+	err = apiRetryLoop(func() error {
+		return service.Do(&req, &records)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	log.Debugf("Got all Records, status is %s", records.Status)
+
+	if strings.ToLower(records.Status) == "incomplete" {
+		jobRequest := dynectsoap.GetJobRequestType{
+			Token:          token,
+			Job_id:         records.Job_id,
+			Fault_incompat: 0,
+		}
+
+		jobResults := dynectsoap.GetJobResponseType{}
+		err = apiRetryLoop(func() error {
+			return service.GetJobRetry(&jobRequest, &jobResults)
+		})
+		if err != nil {
+			return nil, err
+		}
+		return jobResults.Data.(*dynectsoap.GetAllRecordsResponseType), nil
+	}
+
+	return &records, nil
+
 }
 
 // fetchAllRecordLinksInZone list all records in a zone with a single call. Records not matched by the
@@ -409,7 +496,11 @@ func (d *dynProviderState) deleteRecord(client *dynect.Client, ep *endpoint.Endp
 	}
 
 	response := dynect.RecordResponse{}
-	err := client.Do("DELETE", link, nil, &response)
+
+	err := apiRetryLoop(func() error {
+		return client.Do("DELETE", link, nil, &response)
+	})
+
 	log.Debugf("Deleting record %s: %+v,", link, errorOrValue(err, &response))
 	return err
 }
@@ -422,7 +513,10 @@ func (d *dynProviderState) replaceRecord(client *dynect.Client, ep *endpoint.End
 	}
 
 	response := dynect.RecordResponse{}
-	err := client.Do("PUT", link, record, &response)
+	err := apiRetryLoop(func() error {
+		return client.Do("PUT", link, record, &response)
+	})
+
 	log.Debugf("Replacing record %s: %+v,", link, errorOrValue(err, &response))
 	return err
 }
@@ -435,7 +529,10 @@ func (d *dynProviderState) createRecord(client *dynect.Client, ep *endpoint.Endp
 	}
 
 	response := dynect.RecordResponse{}
-	err := client.Do("POST", link, record, &response)
+	err := apiRetryLoop(func() error {
+		return client.Do("POST", link, record, &response)
+	})
+
 	log.Debugf("Creating record %s: %+v,", link, errorOrValue(err, &response))
 	return err
 }
@@ -468,9 +565,13 @@ func (d *dynProviderState) commit(client *dynect.Client) error {
 			Notes:   notes,
 		}
 
-		response := ZonePublisResponse{}
-		err = client.Do("PUT", fmt.Sprintf("Zone/%s/", zone), &zonePublish, &response)
-		log.Infof("Commiting changes for zone %s: %+v", zone, errorOrValue(err, &response))
+		response := ZonePublishResponse{}
+
+		// always retry the commit: don't waste the good work so far
+		err = apiRetryLoop(func() error {
+			return client.Do("PUT", fmt.Sprintf("Zone/%s/", zone), &zonePublish, &response)
+		})
+		log.Infof("Committing changes for zone %s: %+v", zone, errorOrValue(err, &response))
 	}
 
 	switch len(errs) {
@@ -498,24 +599,37 @@ func (d *dynProviderState) Records() ([]*endpoint.Endpoint, error) {
 	var result []*endpoint.Endpoint
 
 	zones := d.zones(client)
-	log.Infof("Zones found: %+v", zones)
+	log.Infof("Configured zones: %+v", zones)
 	for _, zone := range zones {
-		recordLinks, err := d.fetchAllRecordLinksInZone(client, zone)
+		serial, err := d.fetchZoneSerial(client, zone)
 		if err != nil {
+			if strings.Index(err.Error(), "404 Not Found") >= 0 {
+				log.Infof("Ignore zone %s as it does not exist", zone)
+				continue
+			}
+
 			return nil, err
 		}
 
-		log.Infof("Relevant records found in zone %s: %+v", zone, recordLinks)
-		for _, link := range recordLinks {
-			ep, err := d.recordLinkToEndpoint(client, link)
-			if err != nil {
-				return nil, err
-			}
-
-			if ep != nil {
-				result = append(result, ep)
-			}
+		relevantRecords := d.ZoneSnapshot.GetRecordsForSerial(zone, serial)
+		if relevantRecords != nil {
+			log.Infof("Using %d cached records for zone %s@%d", len(relevantRecords), zone, serial)
+			result = append(result, relevantRecords...)
+			continue
 		}
+
+		//Fetch All Records
+		records, err := d.fetchAllRecordsInZone(zone)
+		if err != nil {
+			return nil, err
+		}
+		relevantRecords = d.allRecordsToEndpoints(records)
+
+		log.Debugf("Relevant records %+v", relevantRecords)
+
+		d.ZoneSnapshot.StoreRecordsForSerial(zone, serial, relevantRecords)
+		log.Infof("Stored %d records for %s@%d", len(relevantRecords), zone, serial)
+		result = append(result, relevantRecords...)
 	}
 
 	return result, nil

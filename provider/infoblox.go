@@ -17,6 +17,7 @@ limitations under the License.
 package provider
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -95,10 +96,11 @@ func NewInfobloxProvider(infobloxConfig InfobloxConfig) (*InfobloxProvider, erro
 func (p *InfobloxProvider) Records() (endpoints []*endpoint.Endpoint, err error) {
 	zones, err := p.zones()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not fetch zones: %s", err)
 	}
 
 	for _, zone := range zones {
+		logrus.Debugf("fetch records from zone '%s'", zone.Fqdn)
 		var resA []ibclient.RecordA
 		objA := ibclient.NewRecordA(
 			ibclient.RecordA{
@@ -107,26 +109,26 @@ func (p *InfobloxProvider) Records() (endpoints []*endpoint.Endpoint, err error)
 		)
 		err = p.client.GetObject(objA, "", &resA)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("could not fetch A records from zone '%s': %s", zone.Fqdn, err)
 		}
 		for _, res := range resA {
-			endpoints = append(endpoints, endpoint.NewEndpoint(res.Name, res.Ipv4Addr, endpoint.RecordTypeA))
+			endpoints = append(endpoints, endpoint.NewEndpoint(res.Name, endpoint.RecordTypeA, res.Ipv4Addr))
 		}
 
 		// Include Host records since they should be treated synonymously with A records
-		var resH []ibclient.RecordHost
-		objH := ibclient.NewRecordHost(
-			ibclient.RecordHost{
+		var resH []ibclient.HostRecord
+		objH := ibclient.NewHostRecord(
+			ibclient.HostRecord{
 				Zone: zone.Fqdn,
 			},
 		)
 		err = p.client.GetObject(objH, "", &resH)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("could not fetch host records from zone '%s': %s", zone.Fqdn, err)
 		}
 		for _, res := range resH {
 			for _, ip := range res.Ipv4Addrs {
-				endpoints = append(endpoints, endpoint.NewEndpoint(res.Name, ip.Ipv4Addr, endpoint.RecordTypeA))
+				endpoints = append(endpoints, endpoint.NewEndpoint(res.Name, endpoint.RecordTypeA, ip.Ipv4Addr))
 			}
 		}
 
@@ -138,10 +140,10 @@ func (p *InfobloxProvider) Records() (endpoints []*endpoint.Endpoint, err error)
 		)
 		err = p.client.GetObject(objC, "", &resC)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("could not fetch CNAME records from zone '%s': %s", zone.Fqdn, err)
 		}
 		for _, res := range resC {
-			endpoints = append(endpoints, endpoint.NewEndpoint(res.Name, res.Canonical, endpoint.RecordTypeCNAME))
+			endpoints = append(endpoints, endpoint.NewEndpoint(res.Name, endpoint.RecordTypeCNAME, res.Canonical))
 		}
 
 		var resT []ibclient.RecordTXT
@@ -152,7 +154,7 @@ func (p *InfobloxProvider) Records() (endpoints []*endpoint.Endpoint, err error)
 		)
 		err = p.client.GetObject(objT, "", &resT)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("could not fetch TXT records from zone '%s': %s", zone.Fqdn, err)
 		}
 		for _, res := range resT {
 			// The Infoblox API strips enclosing double quotes from TXT records lacking whitespace.
@@ -160,9 +162,10 @@ func (p *InfobloxProvider) Records() (endpoints []*endpoint.Endpoint, err error)
 			if _, err := strconv.Unquote(res.Text); err != nil {
 				res.Text = strconv.Quote(res.Text)
 			}
-			endpoints = append(endpoints, endpoint.NewEndpoint(res.Name, res.Text, endpoint.RecordTypeTXT))
+			endpoints = append(endpoints, endpoint.NewEndpoint(res.Name, endpoint.RecordTypeTXT, res.Text))
 		}
 	}
+	logrus.Debugf("fetched %d records from infoblox", len(endpoints))
 	return endpoints, nil
 }
 
@@ -174,8 +177,8 @@ func (p *InfobloxProvider) ApplyChanges(changes *plan.Changes) error {
 	}
 
 	created, deleted := p.mapChanges(zones, changes)
-	p.createRecords(created)
 	p.deleteRecords(deleted)
+	p.createRecords(created)
 	return nil
 }
 
